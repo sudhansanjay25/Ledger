@@ -65,7 +65,7 @@ def run_test_case(document_id: str, description: str):
     print("="*80 + "\n")
 
 def main():
-    print("Initializing EnigmaGov Planner Agent Test Suite...")
+    print("Initializing Ledger Planner Agent Test Suite...")
     
     # Test Case 1: Benign Payment Security Circular
     run_test_case(

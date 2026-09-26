@@ -1,10 +1,10 @@
-# EnigmaGov: Project Analysis & Implementation Roadmap
+# Ledger: Project Analysis & Implementation Roadmap
 
-EnigmaGov is a **security-first, agentic compliance operating system** designed to automate the entire lifecycle of regulatory compliance for financial institutions (banks, NBFCs, fintechs). It monitors regulatory portals, parses documents safely, extracts actionable compliance mandates into a structured format, routes tasks to the correct departments, and monitors proof of completion.
+Ledger is a **security-first, agentic compliance operating system** designed to automate the entire lifecycle of regulatory compliance for financial institutions (banks, NBFCs, fintechs). It monitors regulatory portals, parses documents safely, extracts actionable compliance mandates into a structured format, routes tasks to the correct departments, and monitors proof of completion.
 
 ---
 
-## 1. EnigmaGov in Simple Terms
+## 1. Ledger in Simple Terms
 
 ### The Problem
 Financial institutions are constantly flooded with new guidelines, circulars, and notices from multiple regulators (RBI, SEBI, IRDAI, NPCI). Currently, compliance teams must:
@@ -16,8 +16,8 @@ Financial institutions are constantly flooded with new guidelines, circulars, an
 
 This manual process is slow, inconsistent, hard to audit, and carries a high risk of multi-million dollar penalties if a deadline or rule is missed.
 
-### The Solution: EnigmaGov
-EnigmaGov automates this entire pipeline using AI agents:
+### The Solution: Ledger
+Ledger automates this entire pipeline using AI agents:
 1. **Automated Monitoring**: It acts as a digital watchman, constantly checking regulatory websites for new documents.
 2. **Security Gate**: Before the document touches any AI or internal system, it goes through a strict security check to prevent hacking attempts (like hidden instructions in PDFs).
 3. **AI-Powered Reading & Extraction**: A specialized AI reads the document, extracts exact tasks, identifies the affected department, and determines the deadline. It formats these tasks as **Measurable Action Points (MAPs)**.

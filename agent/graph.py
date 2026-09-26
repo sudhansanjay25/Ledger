@@ -1,3 +1,4 @@
+import os
 import json
 from typing import Dict, Any, List, Literal
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage, SystemMessage
@@ -103,16 +104,27 @@ def planner_node(state: AgentState) -> Dict[str, Any]:
     
     real_llm = get_real_llm_planner()
     
-    if real_llm:
-        messages = temp_state.get("messages", [])
-        if not messages or not isinstance(messages[0], SystemMessage):
-            messages = [SystemMessage(content=PLANNER_SYSTEM_PROMPT)] + messages
-            
-        # Call Groq LLM with tools bound
-        response = real_llm.invoke(messages)
-        updates["messages"] = [response]
+    # Check if user forced mock planner or if real LLM is available
+    use_mock = os.environ.get("USE_MOCK_PLANNER", "").lower() in ("1", "true", "yes")
+    
+    if real_llm and not use_mock:
+        try:
+            messages = temp_state.get("messages", [])
+            if not messages or not isinstance(messages[0], SystemMessage):
+                messages = [SystemMessage(content=PLANNER_SYSTEM_PROMPT)] + messages
+                
+            # Call Groq LLM with tools bound
+            response = real_llm.invoke(messages)
+            if not response.content and not getattr(response, "tool_calls", None):
+                response = mock_planner_decision(temp_state)
+            updates["messages"] = [response]
+        except Exception as exc:
+            # Resilient fallback to deterministic rule planner if Groq encounters rate-limits/tool-arg parsing issues
+            updates["execution_logs"].append(f"LLM planner warning: {str(exc)[:80]}... Falling back to rule planner.")
+            response = mock_planner_decision(temp_state)
+            updates["messages"] = [response]
     else:
-        # Fallback to local rule-based planner for testing
+        # Fallback to local rule-based planner
         response = mock_planner_decision(temp_state)
         updates["messages"] = [response]
         

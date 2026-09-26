@@ -1,4 +1,4 @@
-# Mock datasets representing regulatory updates for testing the EnigmaGov agentic pipeline.
+# Mock datasets representing regulatory updates for testing the Ledger agentic pipeline.
 
 # 1. A realistic benign RBI circular on digital payment security
 BENIGN_RBI_CIRCULAR = {

@@ -253,7 +253,9 @@ def extract_obligations(reference_date_str: str = "2026-07-15") -> Dict[str, Any
             obligation_type = "ADVISORY"
             
         action = sentence.strip()
-        action = re.sub(r'^(?:[0-9a-zA-Z\.\(\)\-]+\s+)+', '', action)
+        action = re.sub(r'^(?:(?:\([a-zA-Z0-9]+\)|\d+[\.\)]|[a-zA-Z][\.\)])\s*)+', '', action).strip()
+        if not action:
+            action = sentence.strip()
         
         deadline = "None"
         deadline_type = "implicit"
@@ -306,6 +308,10 @@ def generate_map_objects() -> List[Dict[str, Any]]:
     """
     global ACTIVE_DOCUMENT
     obligations = ACTIVE_DOCUMENT.get("obligations", [])
+    if not obligations:
+        extract_result = extract_obligations.invoke({"reference_date_str": "2026-07-15"})
+        if isinstance(extract_result, dict):
+            obligations = extract_result.get("obligations", [])
     classification = ACTIVE_DOCUMENT.get("classification", {
         "category": "General Banking Regulations",
         "departments": ["Operations"],

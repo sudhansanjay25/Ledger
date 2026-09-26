@@ -32,7 +32,7 @@ ALL_TOOLS = [
 TOOL_MAP = {t.name: t for t in ALL_TOOLS}
 
 # Define the system prompt for the planner agent
-PLANNER_SYSTEM_PROMPT = """You are a regulatory compliance Planner Agent for EnigmaGov.
+PLANNER_SYSTEM_PROMPT = """You are a regulatory compliance Planner Agent for Ledger.
 Your job is to process regulatory documents by orchestrating tools dynamically at runtime.
 
 You have access to the following tools:
@@ -49,8 +49,9 @@ INSTRUCTIONS:
 - Once you have the document content, you must IMMEDIATELY run `security_scan` to verify it is safe.
 - CRITICAL: If `security_scan` returns that the document is NOT safe (e.g. threat_detected is not None), you must halt execution immediately, output a security alert, and DO NOT call any other tool.
 - If it is safe, call `extract_text`. If the text quality is too low (is_readable is False), halt and ask for manual review.
-- If it is readable, proceed to call `classify_document` and `extract_obligations` (can be done in parallel or sequence).
-- Finally, use `generate_map_objects` to format the extracted compliance obligations into MAP objects, and return the final list.
+- If it is readable, proceed to call `classify_document` and `extract_obligations`.
+- Then call `generate_map_objects` to format the extracted compliance obligations into MAP objects.
+- CRITICAL: Once `generate_map_objects` has returned, do NOT call any more tools. Provide a complete final summary of the circular, findings, and MAP count.
 """
 
 def get_real_llm_planner():
@@ -59,8 +60,8 @@ def get_real_llm_planner():
     if not api_key:
         return None
     try:
-        # Initialize Groq Chat Model
-        llm = ChatGroq(model="openai/gpt-oss-120b", temperature=0)
+        model_name = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
+        llm = ChatGroq(model=model_name, temperature=0)
         return llm.bind_tools(ALL_TOOLS)
     except Exception:
         return None
@@ -78,6 +79,18 @@ def mock_planner_decision(state: AgentState) -> AIMessage:
     doc = state.get("document", {})
     sec = state.get("security_scan", {})
     ext_maps = state.get("extracted_maps", [])
+    
+    # Check if map generation already executed
+    has_generated_maps = any(isinstance(m, ToolMessage) and m.name == "generate_map_objects" for m in messages)
+    if has_generated_maps:
+        classification = state.get("classification", {})
+        return AIMessage(
+            content=f"Successfully processed regulatory circular. Generated {len(ext_maps)} Measurable Action Points (MAPs).\n"
+                    f"Document: {doc.get('title')} ({doc.get('id')})\n"
+                    f"Category: {classification.get('category', 'General')}\n"
+                    f"Priority: {classification.get('priority', 'Medium')}\n"
+                    f"Departments: {', '.join(classification.get('departments', []))}"
+        )
     
     # 1. Start: No tools called yet. The user provided a command.
     # Look for document ID in the last message
@@ -167,7 +180,7 @@ def mock_planner_decision(state: AgentState) -> AIMessage:
         )
         
     # 7. Generate final MAP objects
-    if not ext_maps:
+    if not ext_maps and not has_generated_maps:
         return AIMessage(
             content="Generating structured, traceable Measurable Action Points (MAPs) from extracted data...",
             tool_calls=[{
