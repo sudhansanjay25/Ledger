@@ -20,6 +20,39 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, System
 from graph import build_agent_graph
 from sample_data import BENIGN_RBI_CIRCULAR, MALICIOUS_INJECTION_CIRCULAR, LOW_QUALITY_OCR_CIRCULAR
 from tools import MOCK_DOCUMENTS
+from pdf_extractor import extract_text_from_pdf, compute_text_quality, validate_pdf_bytes
+from html_extractor import extract_text_from_html
+from security_validator import validate_document_safety, calculate_sha256
+from document_store import CATALOG
+from scheduler import CRAWLER_SCHEDULER
+
+# Register workspace Ledger.pdf if present
+LEDGER_PDF_PATH = os.path.join(PROJECT_ROOT, "Ledger.pdf")
+if os.path.exists(LEDGER_PDF_PATH):
+    MOCK_DOCUMENTS["ledger_pdf_official"] = {
+        "id": "ledger_pdf_official",
+        "title": "Ledger (EnigmaGov) - Official Autonomous Regulatory Compliance Brief",
+        "source_url": "https://rbi.org.in/guidelines/cybersecurity-brief",
+        "format": "digital_pdf",
+        "file_path": LEDGER_PDF_PATH,
+        "raw_text": ""
+    }
+    try:
+        with open(LEDGER_PDF_PATH, "rb") as f:
+            pdf_bytes = f.read()
+        pdf_res = extract_text_from_pdf(pdf_bytes)
+        if pdf_res.get("success"):
+            CATALOG.register_document(
+                raw_text=pdf_res["text"],
+                title="Ledger (EnigmaGov) - Official Autonomous Regulatory Compliance Brief",
+                source_url="https://rbi.org.in/guidelines/cybersecurity-brief",
+                format_type="digital_pdf",
+                regulator="RBI",
+                custom_id="ledger_pdf_official",
+                quality_score=pdf_res["quality_score"]
+            )
+    except Exception:
+        pass
 
 app = Flask(__name__)
 # Enable CORS for Next.js frontend (default http://localhost:3000)
@@ -250,7 +283,7 @@ def health():
 
 @app.route("/api/documents", methods=["GET"])
 def list_documents():
-    """Returns available sample regulatory documents."""
+    """Returns available sample and ingested regulatory documents."""
     docs = [
         {
             "id": "rbi_2026_payment_sec_01",
@@ -283,7 +316,170 @@ def list_documents():
             "expected_outcome": "Text Quality Score Alert (< 0.5) & Routing to Review"
         }
     ]
+
+    existing_ids = {d["id"] for d in docs}
+
+    # Include workspace official PDF if registered
+    if "ledger_pdf_official" in MOCK_DOCUMENTS and "ledger_pdf_official" not in existing_ids:
+        docs.append({
+            "id": "ledger_pdf_official",
+            "title": "Ledger (EnigmaGov) - Official Regulatory Specification PDF",
+            "category": "Real PDF Ingestion",
+            "type": "Production PDF Circular",
+            "description": "The real Ledger.pdf document from project root. Tests live multi-page PDF parsing, security checks, and MAP extraction.",
+            "source_url": "https://rbi.org.in/guidelines/cybersecurity-brief",
+            "format": "digital_pdf",
+            "expected_outcome": "Multi-page PDF extraction and compliance structuring"
+        })
+        existing_ids.add("ledger_pdf_official")
+
+    # Include all documents dynamically tracked in CATALOG
+    for cat_doc in CATALOG.list_documents():
+        doc_id = cat_doc["id"]
+        if doc_id not in existing_ids:
+            regulator = cat_doc.get("regulator", "Regulatory")
+            word_count = len(cat_doc.get("raw_text", "").split())
+            docs.append({
+                "id": doc_id,
+                "title": cat_doc.get("title", "Regulatory Circular"),
+                "category": f"{regulator} Directives",
+                "type": f"{regulator} Live Ingested Circular",
+                "description": f"Published: {cat_doc.get('published_date', 'N/A')} · {word_count} words · SHA-256: {cat_doc.get('sha256', '')[:10]}...",
+                "source_url": cat_doc.get("source_url", "https://rbi.org.in"),
+                "format": cat_doc.get("format", "digital_pdf"),
+                "expected_outcome": "Automated compliance extraction and MAP generation"
+            })
+            existing_ids.add(doc_id)
+
+    # Include any dynamically uploaded documents from MOCK_DOCUMENTS
+    for doc_id, doc in MOCK_DOCUMENTS.items():
+        if doc_id not in existing_ids and doc_id.startswith("upload_"):
+            word_count = len(doc.get("raw_text", "").split())
+            docs.append({
+                "id": doc_id,
+                "title": doc.get("title", "Uploaded Document"),
+                "category": "User Uploaded File",
+                "type": f"Uploaded {doc.get('format', 'Document').replace('_', ' ').title()}",
+                "description": f"Uploaded document ({word_count} words, quality {doc.get('quality_score', 1.0)}).",
+                "source_url": doc.get("source_url", "https://rbi.org.in/uploaded-circular"),
+                "format": doc.get("format", "digital_pdf"),
+                "expected_outcome": "Pipeline ingestion and MAP structuring"
+            })
+            existing_ids.add(doc_id)
+
     return jsonify({"documents": docs})
+
+@app.route("/api/documents/upload", methods=["POST"])
+def upload_document():
+    """
+    Accepts a real PDF, HTML, or TXT file upload.
+    Validates file magic bytes (preventing extension spoofing),
+    extracts text, computes readability metrics, and registers with SHA-256 deduplication.
+    """
+    if "file" not in request.files:
+        return jsonify({"error": "No file part in the request"}), 400
+
+    uploaded_file = request.files["file"]
+    if uploaded_file.filename == "":
+        return jsonify({"error": "No selected file"}), 400
+
+    filename = uploaded_file.filename
+    title = request.form.get("title") or filename.replace("_", " ").rsplit(".", 1)[0]
+    file_bytes = uploaded_file.read()
+
+    # 1. Pre-ingestion magic byte validation
+    safety = validate_document_safety(file_bytes, filename=filename)
+    if not safety["is_safe_format"]:
+        return jsonify({
+            "error": safety["error"] or "File failed format safety checks."
+        }), 400
+
+    detected_format = safety["format"]
+    page_count = 1
+
+    # 2. Extract text by format
+    if detected_format == "pdf":
+        result = extract_text_from_pdf(file_bytes)
+        if not result.get("success"):
+            return jsonify({"error": result.get("error", "Failed to parse PDF document")}), 400
+
+        raw_text = result["text"]
+        quality_score = result["quality_score"]
+        is_readable = result["is_readable"]
+        page_count = result["page_count"]
+        total_words = result["total_words"]
+        format_type = "digital_pdf"
+    elif detected_format == "html":
+        result = extract_text_from_html(file_bytes)
+        if not result.get("success"):
+            return jsonify({"error": result.get("error", "Failed to parse HTML document")}), 400
+
+        raw_text = result["text"]
+        quality_score = result["quality_score"]
+        is_readable = result["is_readable"]
+        total_words = result["total_words"]
+        format_type = "html"
+        if result.get("title"):
+            title = result["title"]
+    else:
+        # Plain text
+        try:
+            raw_text = file_bytes.decode("utf-8")
+        except Exception:
+            raw_text = file_bytes.decode("latin-1", errors="ignore")
+
+        metrics = compute_text_quality(raw_text)
+        quality_score = metrics["quality_score"]
+        is_readable = metrics["is_readable"]
+        total_words = metrics["total_words"]
+        format_type = "plain_text"
+
+    # 3. Register in DocumentStore with SHA-256 deduplication
+    doc_entry = CATALOG.register_document(
+        raw_text=raw_text,
+        title=title,
+        source_url="https://rbi.org.in/uploaded-circular",
+        format_type=format_type,
+        regulator="Uploaded",
+        quality_score=quality_score,
+        is_readable=is_readable,
+        metadata={
+            "page_count": page_count,
+            "total_words": total_words,
+            "filename": filename
+        }
+    )
+
+    # Sync with tools.MOCK_DOCUMENTS
+    MOCK_DOCUMENTS[doc_entry["id"]] = doc_entry
+
+    return jsonify({
+        "status": "success",
+        "document_id": doc_entry["id"],
+        "title": doc_entry["title"],
+        "format": doc_entry["format"],
+        "sha256": doc_entry["sha256"],
+        "is_duplicate": doc_entry.get("is_duplicate", False),
+        "page_count": page_count,
+        "total_words": total_words,
+        "quality_score": quality_score,
+        "is_readable": is_readable,
+        "sample_preview": raw_text[:300] + ("..." if len(raw_text) > 300 else "")
+    })
+
+@app.route("/api/crawler/trigger", methods=["POST"])
+def trigger_crawler():
+    """Triggers an on-demand crawl across regulatory portals (RBI, SEBI, IRDAI, NPCI)."""
+    summary = CRAWLER_SCHEDULER.trigger_now()
+    return jsonify({
+        "status": "success",
+        "summary": summary
+    })
+
+@app.route("/api/crawler/status", methods=["GET"])
+def crawler_status():
+    """Returns scheduler state, intervals, and crawl execution history."""
+    return jsonify(CRAWLER_SCHEDULER.get_status())
 
 @app.route("/api/agent/run", methods=["POST"])
 def run_agent():
