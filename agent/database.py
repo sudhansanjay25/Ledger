@@ -120,6 +120,41 @@ class AuditLogModel(Base):
         }
 
 
+class ProofRecordModel(Base):
+    __tablename__ = "proof_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    action_id = Column(String(50), nullable=False, index=True)
+    filename = Column(String(255), nullable=False)
+    file_format = Column(String(30), default="digital_pdf")
+    sha256 = Column(String(64), nullable=False)
+    extracted_text = Column(Text, nullable=False)
+    uploaded_by_role = Column(String(30), default="department_head")
+    uploaded_by_id = Column(String(50), default="dept_user")
+    verification_status = Column(String(30), default="pending", index=True)  # pending, verified, incomplete, rejected
+    verification_score = Column(Float, default=0.0)
+    verification_feedback = Column(Text, nullable=True)
+    jira_status_verified = Column(Boolean, default=False)
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "action_id": self.action_id,
+            "filename": self.filename,
+            "file_format": self.file_format,
+            "sha256": self.sha256,
+            "extracted_text_preview": self.extracted_text[:200] + "..." if len(self.extracted_text) > 200 else self.extracted_text,
+            "uploaded_by_role": self.uploaded_by_role,
+            "uploaded_by_id": self.uploaded_by_id,
+            "verification_status": self.verification_status,
+            "verification_score": round(self.verification_score, 2),
+            "verification_feedback": self.verification_feedback,
+            "jira_status_verified": self.jira_status_verified,
+            "timestamp": self.timestamp.isoformat() if self.timestamp else None
+        }
+
+
 def compute_audit_hash(action_id: str, action_type: str, actor_id: str, timestamp_str: str, new_state_json: str) -> str:
     """Computes a tamper-evident SHA-256 seal for the audit record."""
     payload = f"{action_id}:{action_type}:{actor_id}:{timestamp_str}:{new_state_json}"

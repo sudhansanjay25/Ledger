@@ -7,6 +7,8 @@ import DAGVisualizer from './components/DAGVisualizer';
 import TerminalFeed from './components/TerminalFeed';
 import Inspector from './components/Inspector';
 import ErrorBanner from './components/ErrorBanner';
+import ExecutiveDashboard from './components/ExecutiveDashboard';
+import { Cpu, LayoutDashboard } from 'lucide-react';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
@@ -40,6 +42,7 @@ const DEFAULT_DOCUMENTS = [
 export default function AgentDashboard() {
   const [documents, setDocuments] = useState(DEFAULT_DOCUMENTS);
   const [selectedDocId, setSelectedDocId] = useState('rbi_2026_payment_sec_01');
+  const [viewMode, setViewMode] = useState('pipeline'); // 'pipeline' | 'dashboard'
 
   // Agent Execution State
   const [isRunning, setIsRunning] = useState(false);
@@ -298,45 +301,101 @@ export default function AgentDashboard() {
         />
       )}
 
-      {/* Main Cockpit Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '380px 1fr', gap: '24px' }}>
-        {/* Left Column: Launchpad & Terminal */}
-        <section style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <Launchpad
-            documents={documents}
-            selectedDocId={selectedDocId}
-            setSelectedDocId={setSelectedDocId}
-            isRunning={isRunning}
-            backendHealth={backendHealth}
-            onRun={handleRunAgent}
-            onReset={handleReset}
-            apiBaseUrl={API_BASE_URL}
-            onDocumentUploaded={handleDocumentUploaded}
-            onRefreshDocuments={fetchBackendData}
-          />
+      {/* Primary View Mode Switcher */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '24px' }}>
+        <button
+          onClick={() => setViewMode('pipeline')}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '10px 20px',
+            borderRadius: 'var(--radius-md)',
+            fontWeight: 700,
+            fontSize: '0.875rem',
+            border: 'none',
+            cursor: 'pointer',
+            background: viewMode === 'pipeline' ? 'linear-gradient(135deg, #6366f1, #06b6d4)' : 'rgba(255, 255, 255, 0.05)',
+            color: viewMode === 'pipeline' ? '#ffffff' : 'var(--text-muted)',
+            boxShadow: viewMode === 'pipeline' ? '0 0 15px rgba(99, 102, 241, 0.3)' : 'none',
+            transition: 'all 0.2s ease'
+          }}
+        >
+          <Cpu size={16} />
+          Agent Pipeline Cockpit
+        </button>
 
-          <TerminalFeed
-            eventsFeed={eventsFeed}
-            terminalEndRef={terminalEndRef}
-          />
-        </section>
-
-        {/* Right Column: DAG Visualizer & State Inspector */}
-        <section style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <DAGVisualizer
-            activeNode={activeNode}
-            currentNodeActivity={currentNodeActivity}
-            agentState={agentState}
-            finalOutcome={finalOutcome}
-          />
-
-          <Inspector
-            agentState={agentState}
-            selectedDocId={selectedDocId}
-            finalOutcome={finalOutcome}
-          />
-        </section>
+        <button
+          onClick={() => setViewMode('dashboard')}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '10px 20px',
+            borderRadius: 'var(--radius-md)',
+            fontWeight: 700,
+            fontSize: '0.875rem',
+            border: 'none',
+            cursor: 'pointer',
+            background: viewMode === 'dashboard' ? 'linear-gradient(135deg, #6366f1, #06b6d4)' : 'rgba(255, 255, 255, 0.05)',
+            color: viewMode === 'dashboard' ? '#ffffff' : 'var(--text-muted)',
+            boxShadow: viewMode === 'dashboard' ? '0 0 15px rgba(99, 102, 241, 0.3)' : 'none',
+            transition: 'all 0.2s ease'
+          }}
+        >
+          <LayoutDashboard size={16} />
+          Multi-Role Executive Dashboard
+        </button>
       </div>
+
+      {viewMode === 'dashboard' ? (
+        <ExecutiveDashboard
+          onSelectDocumentForAgent={(docId) => {
+            setSelectedDocId(docId);
+            setViewMode('pipeline');
+          }}
+        />
+      ) : (
+        /* Main Cockpit Grid */
+        <div style={{ display: 'grid', gridTemplateColumns: '380px 1fr', gap: '24px' }}>
+          {/* Left Column: Launchpad & Terminal */}
+          <section style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <Launchpad
+              documents={documents}
+              selectedDocId={selectedDocId}
+              setSelectedDocId={setSelectedDocId}
+              isRunning={isRunning}
+              backendHealth={backendHealth}
+              onRun={handleRunAgent}
+              onReset={handleReset}
+              apiBaseUrl={API_BASE_URL}
+              onDocumentUploaded={handleDocumentUploaded}
+              onRefreshDocuments={fetchBackendData}
+            />
+
+            <TerminalFeed
+              eventsFeed={eventsFeed}
+              terminalEndRef={terminalEndRef}
+            />
+          </section>
+
+          {/* Right Column: DAG Visualizer & State Inspector */}
+          <section style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <DAGVisualizer
+              activeNode={activeNode}
+              currentNodeActivity={currentNodeActivity}
+              agentState={agentState}
+              finalOutcome={finalOutcome}
+            />
+
+            <Inspector
+              agentState={agentState}
+              selectedDocId={selectedDocId}
+              finalOutcome={finalOutcome}
+            />
+          </section>
+        </div>
+      )}
     </main>
   );
 }
