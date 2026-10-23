@@ -2,15 +2,10 @@ import os
 import re
 from typing import Dict, Any, List
 
-# Load .env file manually if it exists in the workspace root
-env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
-if os.path.exists(env_path):
-    with open(env_path) as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, val = line.split("=", 1)
-                os.environ[key.strip()] = val.strip().strip('"').strip("'")
+from dotenv import load_dotenv
+
+# Load environment variables from .env if present
+load_dotenv()
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_groq import ChatGroq
@@ -98,13 +93,13 @@ def mock_planner_decision(state: AgentState) -> AIMessage:
     if messages:
         last_msg = messages[-1]
         if isinstance(last_msg, HumanMessage):
-            # Extract document ID from text (e.g., "rbi_2026_payment_sec_01")
-            matches = re.findall(r'rbi_[a-zA-Z0-9_]+|malicious_spoof_[a-zA-Z0-9_]+', last_msg.content)
-            if matches:
-                doc_id = matches[0]
+            # Extract document ID from text (e.g., "Please ingest and process document XYZ")
+            doc_match = re.search(r'document\s+([a-zA-Z0-9_\-\.]+)', last_msg.content, re.IGNORECASE)
+            if doc_match:
+                doc_id = doc_match.group(1).rstrip('.')
             else:
-                # Default fallback for testing
-                doc_id = "rbi_2026_payment_sec_01"
+                matches = re.findall(r'rbi_[a-zA-Z0-9_]+|cir_[a-zA-Z0-9_]+|upload_[a-zA-Z0-9_]+|ledger_[a-zA-Z0-9_]+|malicious_spoof_[a-zA-Z0-9_]+|custom_[a-zA-Z0-9_]+', last_msg.content)
+                doc_id = matches[0] if matches else "rbi_2026_payment_sec_01"
                 
     # If the document hasn't been fetched yet
     if not doc or not doc.get("raw_text"):

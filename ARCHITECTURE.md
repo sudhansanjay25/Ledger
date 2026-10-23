@@ -126,7 +126,7 @@ workflow.add_edge("tools", "planner")
 
 ### 3.2. Backend API & SSE Streaming (`/backend`)
 
-Implemented in [`backend/app.py`](file:///home/sanjay/Projects/AI%20Based/Ledger/backend/app.py) using **Flask** and **Flask-CORS**:
+Implemented in [`backend/app.py`](file:///home/sudhan/Desktop/.Code/Projects/Ledger/backend/app.py) using **Flask** and **Flask-CORS**:
 
 1. **Asynchronous Execution Pattern**:
    - When a client triggers `POST /api/agent/run`, a unique `session_id` is created.
@@ -238,22 +238,28 @@ To ensure enterprise safety, Ledger implements multi-layered pre-ingestion secur
 
 ### Starting the Backend
 ```bash
-cd "/home/sanjay/Projects/AI Based/Ledger/backend"
-# Using the workspace virtual environment:
-../venv/bin/python app.py
+# From the project root:
+uv run python backend/app.py
 ```
 *Backend runs on `http://localhost:5000`.*
 
 ### Starting the Frontend
 ```bash
-cd "/home/sanjay/Projects/AI Based/Ledger/frontend"
+# In frontend directory:
+cd frontend
 npm run dev
 ```
 *Frontend dashboard runs on `http://localhost:3000`.*
 
 ### Running Headless CLI Test Suite
 ```bash
-cd "/home/sanjay/Projects/AI Based/Ledger"
-./venv/bin/python agent/main.py
+# From the project root:
+uv run python agent/main.py
 ```
-*Runs all 3 benchmark test cases (Benign Ingestion, Prompt Injection Defense, Low OCR Guardrail).*
+*Runs all benchmark test cases (Benign Ingestion, Prompt Injection Defense, Low OCR Guardrail).*
+
+### Running Unit Test Suite
+```bash
+# From the project root:
+uv run pytest
+```

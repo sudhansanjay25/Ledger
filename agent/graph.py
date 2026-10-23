@@ -69,6 +69,9 @@ def sync_state_from_messages(state: AgentState) -> Dict[str, Any]:
                             "priority": result.get("priority", ""),
                             "language": result.get("language", "English")
                         })
+                elif name == "extract_obligations":
+                    if isinstance(result, dict) and "obligations" in result:
+                        doc_update["obligations"] = result.get("obligations", [])
                 elif name == "generate_map_objects":
                     if isinstance(result, list):
                         maps_update = result
