@@ -5,6 +5,11 @@ from typing import Dict, List, Any, Tuple
 from langchain_core.tools import tool
 
 from sample_data import BENIGN_RBI_CIRCULAR, MALICIOUS_INJECTION_CIRCULAR, LOW_QUALITY_OCR_CIRCULAR
+from pdf_extractor import extract_text_from_pdf
+from classifier import CLASSIFIER
+from extractor import EXTRACTOR
+from models import MAPObject, HallucinationValidator
+from amendment_detector import AMENDMENT_TRACKER
 
 # Helper dictionary for document lookup
 MOCK_DOCUMENTS = {
@@ -21,25 +26,51 @@ def fetch_document(document_id: str) -> Dict[str, Any]:
     """
     Fetches a regulatory document's raw data and metadata by its document ID for testing.
     Caches it internally so downstream tools do not require passing the full text.
+    Supports in-memory presets as well as file-backed documents (e.g. PDFs).
     """
     global ACTIVE_DOCUMENT
     doc = MOCK_DOCUMENTS.get(document_id)
     if not doc:
+        try:
+            from document_store import CATALOG
+            doc = CATALOG.get_document(document_id)
+        except Exception:
+            pass
+
+    if not doc:
         return {"error": f"Document ID '{document_id}' not found. Available IDs: {list(MOCK_DOCUMENTS.keys())}"}
     
+    raw_text = doc.get("raw_text", "")
+    quality_score = doc.get("quality_score", 1.0)
+    
+    # If raw_text is not yet loaded but a file_path is provided, parse it
+    file_path = doc.get("file_path")
+    if not raw_text and file_path:
+        if file_path.lower().endswith(".pdf"):
+            pdf_result = extract_text_from_pdf(file_path)
+            if pdf_result.get("success"):
+                raw_text = pdf_result.get("text", "")
+                quality_score = pdf_result.get("quality_score", 1.0)
+        else:
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    raw_text = f.read()
+            except Exception:
+                raw_text = ""
+
     # Store in the global active document cache
     ACTIVE_DOCUMENT = {
         "id": doc.get("id"),
         "title": doc.get("title"),
-        "source_url": doc.get("source_url"),
-        "format": doc.get("format"),
-        "raw_text": doc.get("raw_text"),
+        "source_url": doc.get("source_url", "https://rbi.org.in/uploaded-circular"),
+        "format": doc.get("format", "digital_pdf"),
+        "raw_text": raw_text,
         "cleaned_text": "",
-        "quality_score": 1.0,
+        "quality_score": quality_score,
         "classification": {},
         "obligations": []
     }
-    return doc
+    return ACTIVE_DOCUMENT
 
 @tool
 def security_scan(source_url: str = "", format_type: str = "") -> Dict[str, Any]:
@@ -168,143 +199,37 @@ def extract_text() -> Dict[str, Any]:
 def classify_document() -> Dict[str, Any]:
     """
     Analyzes the active document's text to classify the regulation category, 
-    affected departments, and priority level. Caches classification results.
+    affected departments, and priority level using multi-dimensional taxonomy.
     """
     global ACTIVE_DOCUMENT
     cleaned_text = ACTIVE_DOCUMENT.get("cleaned_text", "") or ACTIVE_DOCUMENT.get("raw_text", "")
     if not cleaned_text:
         return {"error": "No document content is currently available."}
 
-    text_lower = cleaned_text.lower()
-    
-    # 1. Regulation Category
-    category = "General Banking Regulations"
-    if any(k in text_lower for k in ["payment", "online transaction", "multi-factor", "authentication", "mfa"]):
-        category = "Cybersecurity & Digital Payments"
-    elif any(k in text_lower for k in ["aml", "kyc", "money laundering", "identity", "pan", "aadhaar"]):
-        category = "Compliance & KYC"
-    elif any(k in text_lower for k in ["capital", "basel", "liquidity", "solvency"]):
-        category = "Capital Adequacy & Risk"
-
-    # 2. Affected Departments
-    departments = ["Operations"]
-    if category == "Cybersecurity & Digital Payments":
-        departments = ["IT", "Information Security", "Operations"]
-    elif category == "Compliance & KYC":
-        departments = ["Compliance", "Legal", "KYC Operations"]
-    elif category == "Capital Adequacy & Risk":
-        departments = ["Risk Management", "Finance", "Treasury"]
-
-    # 3. Priority Level
-    priority = "Medium"
-    if any(k in text_lower for k in ["penalty", "fine", "imprisonment", "prosecution", "monetary fines"]):
-        priority = "Critical"
-    elif any(k in text_lower for k in ["immediately", "forthwith", "no later than"]):
-        priority = "High"
-    elif "should" in text_lower or "advisory" in text_lower:
-        priority = "Low"
-
-    result = {
-        "category": category,
-        "departments": departments,
-        "priority": priority,
-        "language": "English"
-    }
-    
-    # Cache classification result
+    result = CLASSIFIER.classify(cleaned_text)
     ACTIVE_DOCUMENT["classification"] = result
     return result
-
-# Helper mapping for implicit deadline resolution
-IMPLICIT_DEADLINES = {
-    "immediately": 7,
-    "forthwith": 3,
-    "promptly": 14,
-    "without delay": 7,
-    "at the earliest": 7,
-    "as soon as possible": 14
-}
 
 @tool
 def extract_obligations(reference_date_str: str = "2026-07-15") -> Dict[str, Any]:
     """
     Extracts compliance obligations, associated deadlines (resolving relative terms),
-    and obligation types from the active document's text. Caches extracted obligations.
+    and obligation types from the active document's text using NLP analysis.
     """
     global ACTIVE_DOCUMENT
     cleaned_text = ACTIVE_DOCUMENT.get("cleaned_text", "") or ACTIVE_DOCUMENT.get("raw_text", "")
     if not cleaned_text:
         return {"error": "No document content is currently available."}
 
-    reference_date = datetime.strptime(reference_date_str, "%Y-%m-%d")
-    obligations = []
-    
-    sentences = re.split(r'(?<=[.!?])\s+', cleaned_text)
-    
-    for sentence in sentences:
-        sentence_lower = sentence.lower()
-        if not any(v in sentence_lower for v in ["must", "shall", "required", "mandated", "hereby directs", "establishes"]):
-            continue
-            
-        obligation_type = "REQUIRED"
-        if any(p in sentence_lower for p in ["prohibited", "shall not", "must not", "forbidden"]):
-            obligation_type = "PROHIBITED"
-        elif any(a in sentence_lower for a in ["should", "advisable", "advisory", "recommended"]):
-            obligation_type = "ADVISORY"
-            
-        action = sentence.strip()
-        action = re.sub(r'^(?:(?:\([a-zA-Z0-9]+\)|\d+[\.\)]|[a-zA-Z][\.\)])\s*)+', '', action).strip()
-        if not action:
-            action = sentence.strip()
-        
-        deadline = "None"
-        deadline_type = "implicit"
-        
-        # 1. Explicit dates
-        date_match = re.search(
-            r'(?:no later than|before|by)\s+([A-Z][a-z]+ \d{1,2},\s*\d{4}|\d{1,2} [A-Z][a-z]+,\s*\d{4})',
-            sentence
-        )
-        if date_match:
-            try:
-                date_str = date_match.group(1).replace(",", "")
-                for fmt in ("%B %d %Y", "%d %B %Y"):
-                    try:
-                        parsed_date = datetime.strptime(date_str, fmt)
-                        deadline = parsed_date.strftime("%Y-%m-%d")
-                        deadline_type = "explicit"
-                        break
-                    except ValueError:
-                        continue
-            except Exception:
-                pass
-                
-        # 2. Implicit deadlines
-        if deadline == "None":
-            for phrase, days in IMPLICIT_DEADLINES.items():
-                if phrase in sentence_lower:
-                    calculated_date = reference_date + timedelta(days=days)
-                    deadline = calculated_date.strftime("%Y-%m-%d")
-                    deadline_type = "derived"
-                    break
-                    
-        obligations.append({
-            "action": action,
-            "deadline": deadline,
-            "deadline_type": deadline_type,
-            "obligation_type": obligation_type,
-            "source_sentence": sentence.strip()
-        })
-        
-    # Cache obligations list
+    obligations = EXTRACTOR.extract_obligations(cleaned_text, reference_date_str=reference_date_str)
     ACTIVE_DOCUMENT["obligations"] = obligations
     return {"obligations": obligations}
 
 @tool
 def generate_map_objects() -> List[Dict[str, Any]]:
     """
-    Formats the cached obligations and classification into structured MAP objects.
-    Retrieves all required context from the internal document cache.
+    Formats the cached obligations and classification into strictly validated,
+    auditable MAP objects with hallucination checks and amendment/supersession detection.
     """
     global ACTIVE_DOCUMENT
     obligations = ACTIVE_DOCUMENT.get("obligations", [])
@@ -312,38 +237,85 @@ def generate_map_objects() -> List[Dict[str, Any]]:
         extract_result = extract_obligations.invoke({"reference_date_str": "2026-07-15"})
         if isinstance(extract_result, dict):
             obligations = extract_result.get("obligations", [])
+
     classification = ACTIVE_DOCUMENT.get("classification", {
         "category": "General Banking Regulations",
         "departments": ["Operations"],
         "priority": "Medium"
     })
     circular_id = ACTIVE_DOCUMENT.get("id", "unknown")
-    
+    cleaned_text = ACTIVE_DOCUMENT.get("cleaned_text", "") or ACTIVE_DOCUMENT.get("raw_text", "")
+
+    # Detect amendment & supersession
+    supersession_info = AMENDMENT_TRACKER.detect_supersession(cleaned_text, circular_id)
+    has_supersession = supersession_info.get("has_supersession", False)
+    explicit_refs = supersession_info.get("explicit_references", [])
+    superseded_by_val = explicit_refs[0] if explicit_refs else None
+
+    # Index active document in ChromaDB for future amendment queries
+    try:
+        AMENDMENT_TRACKER.index_circular(
+            circular_id=circular_id,
+            text=cleaned_text,
+            metadata={
+                "title": ACTIVE_DOCUMENT.get("title", ""),
+                "category": classification.get("category", "")
+            }
+        )
+    except Exception:
+        pass
+
     map_objects = []
-    
+
     for idx, ob in enumerate(obligations):
-        confidence = 0.95
-        if ob["deadline"] == "None":
-            confidence -= 0.20
-        elif ob["deadline_type"] == "derived":
-            confidence -= 0.05
-        if len(ob["action"]) < 20:
-            confidence -= 0.15
-            
-        if not ob["action"] or not ob["source_sentence"]:
+        action_text = ob.get("action", "").strip()
+        source_sentence = ob.get("source_sentence", "").strip()
+
+        if not action_text or not source_sentence:
             continue
-            
-        map_objects.append({
-            "action_id": f"MAP-{circular_id}-{idx+1:02d}",
-            "action": ob["action"],
-            "department": classification.get("departments", ["Operations"]),
-            "deadline": ob["deadline"],
-            "deadline_type": ob["deadline_type"],
-            "priority": classification.get("priority", "Medium"),
-            "obligation_type": ob["obligation_type"],
-            "source_sentence": ob["source_sentence"],
-            "confidence": round(max(0.1, confidence), 2),
-            "circular_id": circular_id
-        })
-        
+
+        confidence = 0.95
+        if ob.get("deadline") == "None":
+            confidence -= 0.20
+        elif ob.get("deadline_type") == "derived":
+            confidence -= 0.05
+        if len(action_text) < 20:
+            confidence -= 0.15
+
+        # Hallucination check
+        quote_check = HallucinationValidator.verify_source_quote(source_sentence, cleaned_text)
+        if not quote_check["verified"]:
+            confidence -= 0.30
+
+        try:
+            map_item = MAPObject(
+                action_id=f"MAP-{circular_id}-{idx+1:02d}",
+                action=action_text,
+                department=classification.get("departments", ["Operations"]),
+                deadline=ob.get("deadline", "None"),
+                deadline_type=ob.get("deadline_type", "implicit"),
+                priority=classification.get("priority", "Medium"),
+                obligation_type=ob.get("obligation_type", "REQUIRED"),
+                source_sentence=source_sentence,
+                confidence=max(0.1, confidence),
+                circular_id=circular_id,
+                is_superseded=has_supersession and len(explicit_refs) > 0,
+                superseded_by=superseded_by_val
+            )
+            map_objects.append(map_item.model_dump())
+        except Exception:
+            map_objects.append({
+                "action_id": f"MAP-{circular_id}-{idx+1:02d}",
+                "action": action_text,
+                "department": classification.get("departments", ["Operations"]),
+                "deadline": ob.get("deadline", "None"),
+                "deadline_type": ob.get("deadline_type", "implicit"),
+                "priority": classification.get("priority", "Medium"),
+                "obligation_type": ob.get("obligation_type", "REQUIRED"),
+                "source_sentence": source_sentence,
+                "confidence": round(max(0.1, confidence), 2),
+                "circular_id": circular_id,
+                "is_superseded": False
+            })
+
     return map_objects
