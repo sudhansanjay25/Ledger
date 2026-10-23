@@ -18,4 +18,5 @@ dependencies = [
     "pytest>=9.1.1",
     "python-dotenv>=1.2.4",
     "spacy>=3.8.16",
+    "sqlalchemy>=2.1.6",
 ]

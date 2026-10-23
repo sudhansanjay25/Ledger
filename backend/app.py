@@ -25,6 +25,7 @@ from html_extractor import extract_text_from_html
 from security_validator import validate_document_safety, calculate_sha256
 from document_store import CATALOG
 from scheduler import CRAWLER_SCHEDULER
+from review_routes import review_bp
 
 # Register workspace Ledger.pdf if present
 LEDGER_PDF_PATH = os.path.join(PROJECT_ROOT, "Ledger.pdf")
@@ -57,6 +58,7 @@ if os.path.exists(LEDGER_PDF_PATH):
 app = Flask(__name__)
 # Enable CORS for Next.js frontend (default http://localhost:3000)
 CORS(app, resources={r"/*": {"origins": "*"}})
+app.register_blueprint(review_bp)
 
 # In-memory store for agent sessions
 # session_id -> { "queue": Queue, "state": dict, "events": list, "status": str, "created_at": str }

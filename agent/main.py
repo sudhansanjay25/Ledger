@@ -55,7 +55,10 @@ def run_test_case(document_id: str, description: str):
         for idx, map_obj in enumerate(result["extracted_maps"]):
             print(f"\n[{idx+1}] ID: {map_obj['action_id']}")
             print(f"    Action: {map_obj['action']}")
-            print(f"    Department: {map_obj['department']}")
+            print(f"    Department: {map_obj['department']} -> Assigned: {map_obj.get('assigned_department', 'N/A')}")
+            print(f"    Status: {map_obj.get('status', 'N/A')} ({map_obj.get('routing_tier', 'N/A')})")
+            if map_obj.get('jira_issue_key'):
+                print(f"    Jira Issue: {map_obj['jira_issue_key']}")
             print(f"    Deadline: {map_obj['deadline']} ({map_obj['deadline_type']})")
             print(f"    Priority: {map_obj['priority']}")
             print(f"    Obligation Type: {map_obj['obligation_type']}")

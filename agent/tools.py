@@ -10,6 +10,10 @@ from classifier import CLASSIFIER
 from extractor import EXTRACTOR
 from models import MAPObject, HallucinationValidator
 from amendment_detector import AMENDMENT_TRACKER
+from confidence_router import ROUTER
+from audit_trail import AUDIT_TRAIL
+from jira_integration import JIRA
+from database import SessionLocal, MAPRecordModel
 
 # Helper dictionary for document lookup
 MOCK_DOCUMENTS = {
@@ -302,9 +306,9 @@ def generate_map_objects() -> List[Dict[str, Any]]:
                 is_superseded=has_supersession and len(explicit_refs) > 0,
                 superseded_by=superseded_by_val
             )
-            map_objects.append(map_item.model_dump())
+            map_dict = map_item.model_dump()
         except Exception:
-            map_objects.append({
+            map_dict = {
                 "action_id": f"MAP-{circular_id}-{idx+1:02d}",
                 "action": action_text,
                 "department": classification.get("departments", ["Operations"]),
@@ -315,7 +319,85 @@ def generate_map_objects() -> List[Dict[str, Any]]:
                 "source_sentence": source_sentence,
                 "confidence": round(max(0.1, confidence), 2),
                 "circular_id": circular_id,
-                "is_superseded": False
-            })
+                "is_superseded": False,
+                "superseded_by": None
+            }
+
+        # 3-Tier Confidence Routing
+        routing = ROUTER.evaluate_routing({
+            **map_dict,
+            "quote_verified": quote_check["verified"]
+        })
+        map_dict["status"] = routing["status"]
+        map_dict["assigned_department"] = routing["assigned_department"]
+        map_dict["routing_tier"] = routing["routing_tier"]
+        map_dict["routing_reason"] = routing["reason"]
+
+        # External System Hook: Mock Jira synchronization for auto-assigned MAPs
+        if routing["status"] == "auto_assigned":
+            try:
+                jira_issue = JIRA.create_issue(
+                    action_id=map_dict["action_id"],
+                    summary=map_dict["action"],
+                    description=f"Auto-assigned regulatory obligation from circular {circular_id}.\nSource quote: {map_dict['source_sentence']}",
+                    department=routing["assigned_department"],
+                    priority=map_dict["priority"],
+                    due_date=map_dict["deadline"]
+                )
+                map_dict["jira_issue_key"] = jira_issue["key"]
+            except Exception:
+                map_dict["jira_issue_key"] = None
+        else:
+            map_dict["jira_issue_key"] = None
+
+        # State persistence & Immutable Audit Trail
+        try:
+            db = SessionLocal()
+            existing_rec = db.query(MAPRecordModel).filter(MAPRecordModel.action_id == map_dict["action_id"]).first()
+            if existing_rec:
+                existing_rec.action = map_dict["action"]
+                existing_rec.department = map_dict["department"]
+                existing_rec.deadline = map_dict["deadline"]
+                existing_rec.priority = map_dict["priority"]
+                existing_rec.status = map_dict["status"]
+                existing_rec.assigned_department = map_dict["assigned_department"]
+                existing_rec.jira_issue_key = map_dict.get("jira_issue_key")
+            else:
+                new_rec = MAPRecordModel(
+                    action_id=map_dict["action_id"],
+                    circular_id=circular_id,
+                    action=map_dict["action"],
+                    department=map_dict["department"],
+                    deadline=map_dict["deadline"],
+                    deadline_type=map_dict["deadline_type"],
+                    priority=map_dict["priority"],
+                    obligation_type=map_dict["obligation_type"],
+                    source_sentence=map_dict["source_sentence"],
+                    confidence=map_dict["confidence"],
+                    status=map_dict["status"],
+                    assigned_department=map_dict["assigned_department"],
+                    jira_issue_key=map_dict.get("jira_issue_key"),
+                    is_superseded=map_dict.get("is_superseded", False),
+                    superseded_by=map_dict.get("superseded_by")
+                )
+                db.add(new_rec)
+            db.commit()
+
+            # Record creation in AuditTrail
+            AUDIT_TRAIL.record_event(
+                action_id=map_dict["action_id"],
+                action_type="CREATED",
+                actor_role="system_agent",
+                actor_id="langgraph_planner",
+                previous_state=None,
+                new_state=map_dict,
+                notes=f"Auto-generated. Routed to '{map_dict['status']}' ({routing['reason']})",
+                session=db
+            )
+            db.close()
+        except Exception:
+            pass
+
+        map_objects.append(map_dict)
 
     return map_objects
